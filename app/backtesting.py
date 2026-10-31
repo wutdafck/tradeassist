@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .models import ModelBundle, predict_next_price
+from .models import ModelBundle, predict_prices
 from .risk_management import build_trade_plan
 from .utils import add_features
 
@@ -25,14 +25,18 @@ def backtest_strategy(
     transaction_cost: float = 0.0008,
 ) -> tuple[pd.DataFrame, dict[str, float]]:
     feature_frame = add_features(raw_data)
+    # Keep the cloud request fast by evaluating the already-prepared features
+    # directly instead of recomputing indicators for every historical bar.
+    max_bars = 700
+    if len(feature_frame) > max_bars:
+        feature_frame = feature_frame.tail(max_bars).reset_index(drop=True)
     balance = starting_balance
     equity_curve = [balance]
     open_position = None
     trades: list[dict[str, float | str]] = []
 
     for i in range(80, len(feature_frame) - 1):
-        history = feature_frame.iloc[: i + 1].copy()
-        latest = history.iloc[-1]
+        latest = feature_frame.iloc[i]
 
         if open_position is not None:
             bar_high = float(latest["high"])
@@ -81,19 +85,31 @@ def backtest_strategy(
                 open_position = None
                 continue
 
-        forecast = predict_next_price(model_bundle, history)
-        signal_strength = abs(forecast["predicted_return"])
-        if signal_strength < float(latest["atr_pct"]) * 0.35 or forecast["confidence"] < confidence_threshold:
+        current_price = float(latest["close"])
+        predicted_price = float(
+            predict_prices(
+                model_bundle.models,
+                model_bundle.weights,
+                feature_frame.loc[[i], model_bundle.feature_columns],
+            )[0]
+        )
+        predicted_return = (predicted_price / current_price) - 1
+        confidence = min(
+            abs(predicted_return) / max(float(latest["atr_pct"]), 1e-6),
+            3.0,
+        ) / 3.0
+        signal_strength = abs(predicted_return)
+        if signal_strength < float(latest["atr_pct"]) * 0.35 or confidence < confidence_threshold:
             continue
 
         if open_position is None:
             trade_plan = build_trade_plan(
                 current_price=float(latest["close"]),
-                predicted_price=forecast["predicted_price"],
+                predicted_price=predicted_price,
                 atr=float(latest["atr"]),
                 account_balance=balance,
                 risk_percentage=risk_percentage,
-                confidence=forecast["confidence"],
+                confidence=confidence,
             )
             open_position = {
                 "signal": trade_plan.signal,

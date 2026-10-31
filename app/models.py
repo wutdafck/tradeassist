@@ -60,8 +60,8 @@ def train_price_model(data: pd.DataFrame, config: FeatureConfig | None = None) -
     candidate_models = [
         LinearRegression(),
         RandomForestRegressor(
-            n_estimators=300,
-            max_depth=8,
+            n_estimators=120,
+            max_depth=7,
             min_samples_leaf=3,
             random_state=42,
             n_jobs=1,
@@ -69,7 +69,7 @@ def train_price_model(data: pd.DataFrame, config: FeatureConfig | None = None) -
         GradientBoostingRegressor(
             learning_rate=0.05,
             max_depth=6,
-            n_estimators=300,
+            n_estimators=160,
             min_samples_leaf=10,
             random_state=42,
         ),
