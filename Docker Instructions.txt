@@ -1,0 +1,25 @@
+Instructions to Run Locally with Docker
+Install Docker:
+
+Download and install Docker from docker.com.
+
+Clone the Project:
+
+Save the project structure and files to a folder on your machine.
+
+Build the Docker Image:
+
+Open a terminal in the project folder and run:
+bash
+Copy
+docker build -t ai_trading_app .
+
+Run the Docker Container:
+
+Run the container with:
+bash
+Copy
+docker run -p 8501:8501 ai_trading_app
+
+Access the App:
+Open your browser and go to http://localhost:8501.
