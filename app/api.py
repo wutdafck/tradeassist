@@ -22,6 +22,8 @@ class MarketDataStatus:
     source: str
     message: str
     symbol_code: str | None = None
+    # Raw Deriv code (e.g. "JD25"), used by the browser chart's live subscription.
+    api_symbol: str | None = None
 
 
 def _generate_demo_data(symbol: str, count: int) -> pd.DataFrame:
@@ -168,7 +170,7 @@ def _resolve_deriv_symbol(display_name: str) -> tuple[str, str]:
     return str(selected_code), str(selected_name)
 
 
-def _fetch_deriv_public_data(symbol: str, timeframe: str, count: int) -> tuple[pd.DataFrame, str]:
+def _fetch_deriv_public_data(symbol: str, timeframe: str, count: int) -> tuple[pd.DataFrame, str, str]:
     symbol_code, resolved_name = _resolve_deriv_symbol(symbol)
     payload = {
         "ticks_history": symbol_code,
@@ -187,7 +189,7 @@ def _fetch_deriv_public_data(symbol: str, timeframe: str, count: int) -> tuple[p
 
     frame = pd.DataFrame(candles)
     frame["source"] = "deriv_public"
-    return ensure_price_frame(frame), f"{resolved_name} ({symbol_code})"
+    return ensure_price_frame(frame), f"{resolved_name} ({symbol_code})", symbol_code
 
 
 def fetch_historical_data_detailed(
@@ -196,11 +198,12 @@ def fetch_historical_data_detailed(
     count: int = 1000,
 ) -> tuple[pd.DataFrame, MarketDataStatus]:
     try:
-        data, resolved_symbol = _fetch_deriv_public_data(symbol, timeframe, count)
+        data, resolved_symbol, api_symbol = _fetch_deriv_public_data(symbol, timeframe, count)
         return data, MarketDataStatus(
             source="deriv_public",
             message=f"Live public Deriv candles loaded for {resolved_symbol}.",
             symbol_code=resolved_symbol,
+            api_symbol=api_symbol,
         )
     except Exception as error:
         error_message = f"Deriv public data unavailable: {error}"

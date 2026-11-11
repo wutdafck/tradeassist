@@ -10,6 +10,7 @@ import pandas as pd
 from .api import fetch_historical_data_detailed, timeframe_to_granularity
 from .backtesting import backtest_strategy
 from .charts import build_candlestick_chart
+from .live_chart import render_live_chart
 from .config import describe_connection_state, get_settings
 from .deriv_auth import (
     account_id,
@@ -171,7 +172,12 @@ def run() -> None:
         candle_count = st.slider("History Length", min_value=250, max_value=5000, value=1200, step=50)
         risk_percentage = st.slider("Risk Per Trade", min_value=0.005, max_value=0.05, value=0.01, step=0.005)
         account_balance = st.number_input("Account Balance", min_value=0.01, value=10_000.0, step=100.0, key="account_balance")
-        live_refresh = st.toggle("Live Refresh", value=False)
+        live_chart = st.toggle(
+            "Live chart",
+            value=True,
+            help="Streams candles from Deriv in your browser, tick by tick. The forecast and signal update on Live Refresh or Run Analysis.",
+        )
+        live_refresh = st.toggle("Live Refresh", value=False, help="Re-runs the forecast and signal on a timer.")
         refresh_seconds = st.slider("Refresh Seconds", min_value=5, max_value=60, value=15, step=5)
         connection_state = describe_connection_state(settings)
         st.divider()
@@ -282,11 +288,23 @@ def run() -> None:
 
     chart_col, side_col = st.columns([2.25, 0.85], gap="medium")
     with chart_col:
-        st.markdown('<p class="section-label">LIVE CANDLESTICK CHART</p>', unsafe_allow_html=True)
-        st.plotly_chart(
-            build_candlestick_chart(feature_frame.tail(180), symbol, trade_plan if should_trade else None),
-            use_container_width=True,
-        )
+        chart_plan = trade_plan if should_trade else None
+        if live_chart:
+            st.markdown('<p class="section-label">LIVE CANDLESTICK CHART</p>', unsafe_allow_html=True)
+            render_live_chart(
+                raw_data,
+                title=data_status.symbol_code or symbol,
+                api_symbol=data_status.api_symbol,
+                granularity=timeframe_to_granularity(timeframe),
+                ws_url=settings.public_market_ws_url,
+                trade_plan=chart_plan,
+            )
+        else:
+            st.markdown('<p class="section-label">CANDLESTICK CHART</p>', unsafe_allow_html=True)
+            st.plotly_chart(
+                build_candlestick_chart(feature_frame.tail(180), symbol, chart_plan),
+                use_container_width=True,
+            )
         st.caption(
             f"Model trained on candles up to {model_trained_through:%Y-%m-%d %H:%M} UTC; "
             f"it retrains every {RETRAIN_EVERY_CANDLES} new candles or when settings change."

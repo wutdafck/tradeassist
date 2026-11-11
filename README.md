@@ -87,6 +87,6 @@ Right now, cTrader FIX is a stub only. The paper executor is the safe test path.
 
 ## Planned live chart and trade monitoring
 
-- The selected chart should stream live market ticks by default, without requiring the user to enable periodic refresh.
+- Done: the chart streams live candles by default (`app/live_chart.py`). The browser subscribes to Deriv's public WebSocket and updates the last candle on every tick, about once a second, with EMA 10/30 and entry/stop/target lines. Turn off **Live chart** in the sidebar for the static Plotly chart. The forecast and signal still update only on **Run Analysis** or **Live Refresh**.
 - Show active paper trades and authenticated Deriv demo or real trades on the live chart, including entry, stop/target where applicable, current price relative to the position, and trade status/P&L when available.
 - After a paper trade is opened, keep the chart streaming and make that position easy to monitor. Live/demo trades should be tracked from the selected authenticated Deriv account.
