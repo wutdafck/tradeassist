@@ -14,6 +14,33 @@ class TradePlan:
     risk_reward_ratio: float
 
 
+MIN_CONFIDENCE = 0.18
+MIN_MOVE_ATR_FRACTION = 0.35
+
+
+def trade_filter(
+    predicted_return: float,
+    atr_pct: float,
+    confidence: float,
+    min_confidence: float = MIN_CONFIDENCE,
+    min_move_atr_fraction: float = MIN_MOVE_ATR_FRACTION,
+) -> tuple[bool, str]:
+    """Decide whether a forecast is strong enough to act on.
+
+    Shared by the live signal and the backtest so both follow the same rule.
+    Returns (should_trade, reason).
+    """
+    min_move = atr_pct * min_move_atr_fraction
+    if abs(predicted_return) < min_move:
+        return False, (
+            f"Forecast move {abs(predicted_return) * 100:.3f}% is below "
+            f"{min_move_atr_fraction:.2f}× ATR ({min_move * 100:.3f}%)"
+        )
+    if confidence < min_confidence:
+        return False, f"Signal strength {confidence * 100:.1f}% is below {min_confidence * 100:.0f}%"
+    return True, "Forecast clears the move and strength filters"
+
+
 def calculate_position_size(
     account_balance: float,
     risk_percentage: float,

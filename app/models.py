@@ -4,31 +4,15 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from sklearn.base import clone
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-from .utils import FeatureConfig, add_features
+from .utils import FEATURE_COLUMNS, FeatureConfig, add_features, labeled_rows
 
 
-FEATURE_COLUMNS = [
-    "close",
-    "returns_1",
-    "returns_5",
-    "returns_10",
-    "ema_fast",
-    "ema_slow",
-    "trend_strength",
-    "volatility_10",
-    "volatility_20",
-    "rsi_14",
-    "atr",
-    "atr_pct",
-    "momentum_3",
-    "momentum_8",
-    "distance_to_low",
-    "distance_to_high",
-]
+TARGET_COLUMN = "target_return"
 
 
 @dataclass
@@ -40,24 +24,8 @@ class ModelBundle:
     metrics: dict[str, float]
 
 
-def _time_split(frame: pd.DataFrame, ratio: float = 0.8) -> tuple[pd.DataFrame, pd.DataFrame]:
-    split_index = max(int(len(frame) * ratio), 1)
-    split_index = min(split_index, len(frame) - 1)
-    return frame.iloc[:split_index].copy(), frame.iloc[split_index:].copy()
-
-
-def train_price_model(data: pd.DataFrame, config: FeatureConfig | None = None) -> ModelBundle:
-    feature_frame = add_features(data, config)
-    if len(feature_frame) < 80:
-        raise ValueError("Not enough prepared data to train a forecasting model.")
-
-    train_frame, test_frame = _time_split(feature_frame)
-    X_train = train_frame[FEATURE_COLUMNS]
-    y_train = train_frame["target_price"]
-    X_test = test_frame[FEATURE_COLUMNS]
-    y_test = test_frame["target_price"]
-
-    candidate_models = [
+def _candidate_models() -> list:
+    return [
         LinearRegression(),
         RandomForestRegressor(
             n_estimators=120,
@@ -75,40 +43,80 @@ def train_price_model(data: pd.DataFrame, config: FeatureConfig | None = None) -
         ),
     ]
 
-    trained_models = []
-    scores = []
-    for model in candidate_models:
-        model.fit(X_train, y_train)
-        predictions = model.predict(X_test)
-        mae = mean_absolute_error(y_test, predictions)
-        rmse = float(np.sqrt(mean_squared_error(y_test, predictions)))
-        trained_models.append(model)
-        scores.append((1 / max(mae, 1e-9), mae, rmse))
 
-    raw_weights = [score[0] for score in scores]
+def fit_ensemble(
+    train: pd.DataFrame,
+    validation: pd.DataFrame,
+    feature_columns: list[str] = FEATURE_COLUMNS,
+) -> tuple[list, list[float]]:
+    """Fit candidate models on `train` and weight them by inverse MAE on `validation`.
+
+    The validation rows are only used to choose weights, never to fit, so any
+    later test set stays untouched by model selection.
+    """
+    models = []
+    raw_weights = []
+    for model in _candidate_models():
+        model.fit(train[feature_columns], train[TARGET_COLUMN])
+        mae = mean_absolute_error(validation[TARGET_COLUMN], model.predict(validation[feature_columns]))
+        models.append(model)
+        raw_weights.append(1 / max(mae, 1e-12))
     weight_sum = sum(raw_weights)
-    weights = [weight / weight_sum for weight in raw_weights]
+    return models, [weight / weight_sum for weight in raw_weights]
 
-    ensemble_predictions = predict_prices(
-        trained_models,
-        weights,
-        X_test,
-    )
-    directional_accuracy = (
-        np.sign(ensemble_predictions - test_frame["close"].to_numpy())
-        == np.sign(test_frame["target_price"].to_numpy() - test_frame["close"].to_numpy())
-    ).mean()
+
+def predict_returns(models: list, weights: list[float], features: pd.DataFrame) -> np.ndarray:
+    stacked = np.column_stack([model.predict(features) for model in models])
+    return np.dot(stacked, np.array(weights))
+
+
+def _directional_accuracy(predicted_returns: np.ndarray, actual_returns: np.ndarray) -> float:
+    moved = actual_returns != 0
+    if not moved.any():
+        return 0.0
+    return float((np.sign(predicted_returns[moved]) == np.sign(actual_returns[moved])).mean())
+
+
+def train_price_model(data: pd.DataFrame, config: FeatureConfig | None = None) -> ModelBundle:
+    feature_frame = add_features(data, config)
+    labeled = labeled_rows(feature_frame)
+    if len(labeled) < 120:
+        raise ValueError("Not enough prepared data to train a forecasting model.")
+
+    # Chronological 60 / 20 / 20 split: fit on train, pick ensemble weights on
+    # validation, report metrics on test (which nothing was tuned on).
+    train_end = int(len(labeled) * 0.6)
+    validation_end = int(len(labeled) * 0.8)
+    train = labeled.iloc[:train_end]
+    validation = labeled.iloc[train_end:validation_end]
+    test = labeled.iloc[validation_end:]
+
+    models, weights = fit_ensemble(train, validation)
+
+    predicted_returns = predict_returns(models, weights, test[FEATURE_COLUMNS])
+    actual_returns = test[TARGET_COLUMN].to_numpy()
+    closes = test["close"].to_numpy()
+    predicted_prices = closes * (1 + predicted_returns)
+    actual_prices = test["target_price"].to_numpy()
 
     metrics = {
-        "mae": float(mean_absolute_error(y_test, ensemble_predictions)),
-        "rmse": float(np.sqrt(mean_squared_error(y_test, ensemble_predictions))),
-        "directional_accuracy": float(directional_accuracy),
-        "train_rows": float(len(train_frame)),
-        "test_rows": float(len(test_frame)),
+        "mae": float(mean_absolute_error(actual_prices, predicted_prices)),
+        "rmse": float(np.sqrt(mean_squared_error(actual_prices, predicted_prices))),
+        "directional_accuracy": _directional_accuracy(predicted_returns, actual_returns),
+        # "Next price = current price" baseline, to show whether the model adds anything.
+        "baseline_mae": float(mean_absolute_error(actual_prices, closes)),
+        "baseline_rmse": float(np.sqrt(mean_squared_error(actual_prices, closes))),
+        "train_rows": float(len(train)),
+        "validation_rows": float(len(validation)),
+        "test_rows": float(len(test)),
     }
 
+    # The live model learns from every labeled row, keeping the weights chosen
+    # on validation. The metrics above describe the held-out evaluation only.
+    final_models = [clone(model).fit(labeled[FEATURE_COLUMNS], labeled[TARGET_COLUMN]) for model in models]
+
     return ModelBundle(
-        models=trained_models,
+        models=final_models,
         weights=weights,
         feature_columns=FEATURE_COLUMNS,
         training_frame=feature_frame,
@@ -116,21 +124,16 @@ def train_price_model(data: pd.DataFrame, config: FeatureConfig | None = None) -
     )
 
 
-def predict_prices(models: list, weights: list[float], features: pd.DataFrame) -> np.ndarray:
-    stacked = np.column_stack([model.predict(features) for model in models])
-    return np.dot(stacked, np.array(weights))
-
-
 def predict_next_price(bundle: ModelBundle, data: pd.DataFrame) -> dict[str, float]:
     feature_frame = add_features(data)
+    latest = feature_frame.iloc[-1]
     latest_features = feature_frame[bundle.feature_columns].tail(1)
-    predicted_price = float(predict_prices(bundle.models, bundle.weights, latest_features)[0])
-    current_price = float(feature_frame["close"].iloc[-1])
-    predicted_return = (predicted_price / current_price) - 1
-    confidence = min(abs(predicted_return) / max(float(feature_frame["atr_pct"].iloc[-1]), 1e-6), 3.0) / 3.0
+    predicted_return = float(predict_returns(bundle.models, bundle.weights, latest_features)[0])
+    current_price = float(latest["close"])
+    confidence = min(abs(predicted_return) / max(float(latest["atr_pct"]), 1e-6), 3.0) / 3.0
     return {
         "current_price": current_price,
-        "predicted_price": predicted_price,
-        "predicted_return": float(predicted_return),
+        "predicted_price": current_price * (1 + predicted_return),
+        "predicted_return": predicted_return,
         "confidence": float(confidence),
     }

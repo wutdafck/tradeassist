@@ -19,7 +19,10 @@ Run the Docker Container:
 Run the container with:
 bash
 Copy
-docker run -p 8501:8501 ai_trading_app
+docker run -p 8501:8501 --env-file .env ai_trading_app
+
+(.env is excluded from the image by .dockerignore, so settings are passed in at run time.
+Leave out --env-file if you have no .env; public market data still works.)
 
 Access the App:
 Open your browser and go to http://localhost:8501.
