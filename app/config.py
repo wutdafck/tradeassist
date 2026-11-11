@@ -20,6 +20,7 @@ class DerivSettings:
         "https://api.derivws.com/trading/v1/options/accounts",
     )
     app_id: str = os.getenv("DERIV_APP_ID", "").strip()
+    oauth_redirect_uri: str = os.getenv("DERIV_OAUTH_REDIRECT_URI", "").strip()
     api_token: str = os.getenv("DERIV_API_TOKEN", "").strip()
     account_id: str = os.getenv("DERIV_ACCOUNT_ID", "").strip()
     account_mode: str = os.getenv("DERIV_ACCOUNT_MODE", "demo").strip().lower()
@@ -41,7 +42,7 @@ class DerivSettings:
 
     @property
     def account_auth_ready(self) -> bool:
-        return bool(self.app_id and self.api_token and self.account_id)
+        return bool(self.app_id and self.oauth_redirect_uri)
 
     @property
     def ctrader_quote_ready(self) -> bool:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -59,7 +60,7 @@ def _generate_demo_data(symbol: str, count: int) -> pd.DataFrame:
     )
 
 
-def _timeframe_to_granularity(timeframe: str) -> int:
+def timeframe_to_granularity(timeframe: str) -> int:
     return {
         "1m": 60,
         "5m": 300,
@@ -87,14 +88,30 @@ def _normalize_symbol_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]", "", value.lower())
 
 
-def _resolve_deriv_symbol(display_name: str) -> tuple[str, str]:
+ACTIVE_SYMBOLS_TTL_SECONDS = 3600
+_active_symbols_cache: dict[str, tuple[float, list]] = {}
+
+
+def _active_symbols() -> list:
+    """Deriv's symbol list, reused for an hour instead of fetched on every run."""
+    url = get_settings().public_market_ws_url
+    cached = _active_symbols_cache.get(url)
+    if cached and time.monotonic() - cached[0] < ACTIVE_SYMBOLS_TTL_SECONDS:
+        return cached[1]
     message = _request_public_market_data(
         {
             "active_symbols": "brief",
             "req_id": 100,
         }
     )
-    active_symbols = message.get("active_symbols") or []
+    symbols = message.get("active_symbols") or []
+    if symbols:
+        _active_symbols_cache[url] = (time.monotonic(), symbols)
+    return symbols
+
+
+def _resolve_deriv_symbol(display_name: str) -> tuple[str, str]:
+    active_symbols = _active_symbols()
     if not active_symbols:
         raise ValueError("Deriv returned no active symbols.")
 
@@ -158,7 +175,7 @@ def _fetch_deriv_public_data(symbol: str, timeframe: str, count: int) -> tuple[p
         "adjust_start_time": 1,
         "count": count,
         "end": "latest",
-        "granularity": _timeframe_to_granularity(timeframe),
+        "granularity": timeframe_to_granularity(timeframe),
         "style": "candles",
         "req_id": 101,
     }
