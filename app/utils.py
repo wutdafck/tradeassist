@@ -19,6 +19,27 @@ SYMBOLS = {
 }
 
 
+# Model inputs. All are returns, ratios or oscillators rather than raw price
+# levels, so tree models are not asked to extrapolate outside the price range
+# they were trained on.
+FEATURE_COLUMNS = [
+    "returns_1",
+    "returns_5",
+    "returns_10",
+    "close_to_ema_fast",
+    "close_to_ema_slow",
+    "trend_strength",
+    "volatility_10",
+    "volatility_20",
+    "rsi_14",
+    "atr_pct",
+    "momentum_3",
+    "momentum_8",
+    "distance_to_low",
+    "distance_to_high",
+]
+
+
 @dataclass(frozen=True)
 class FeatureConfig:
     lookback: int = 20
@@ -116,9 +137,21 @@ def add_features(data: pd.DataFrame, config: FeatureConfig | None = None) -> pd.
     frame["rolling_max_20"] = frame["high"].rolling(20, min_periods=5).max()
     frame["distance_to_low"] = frame["close"] / frame["rolling_min_20"] - 1
     frame["distance_to_high"] = frame["close"] / frame["rolling_max_20"] - 1
+    # Scale-free versions of level features, so models see the same inputs
+    # whatever the absolute price is.
+    frame["close_to_ema_fast"] = frame["close"] / frame["ema_fast"] - 1
+    frame["close_to_ema_slow"] = frame["close"] / frame["ema_slow"] - 1
+    # Targets look into the future. They are NaN for the newest
+    # `prediction_horizon` rows, which must stay in the frame: the newest row
+    # is exactly the one a live forecast is made from.
     frame["target_price"] = frame["close"].shift(-config.prediction_horizon)
     frame["target_return"] = frame["target_price"] / frame["close"] - 1
-    return frame.dropna().reset_index(drop=True)
+    return frame.dropna(subset=FEATURE_COLUMNS).reset_index(drop=True)
+
+
+def labeled_rows(frame: pd.DataFrame) -> pd.DataFrame:
+    """Rows whose future target is already known (usable for training/evaluation)."""
+    return frame.dropna(subset=["target_return"])
 
 
 def summarize_market_state(frame: pd.DataFrame) -> dict[str, float | str]:

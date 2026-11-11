@@ -1,0 +1,19 @@
+# Secrets: never bake these into an image. Pass settings at runtime instead,
+# e.g. `docker run --env-file .env ...`.
+.env
+.env.*
+!.env.example
+GoogleGeminiAPI.txt
+
+# Local environments, caches and tooling
+.venv/
+__pycache__/
+*.pyc
+.streamlit/
+.git/
+.gitignore
+.claude/
+
+# Not needed at runtime
+Docker Instructions.txt
+*.png
